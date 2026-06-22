@@ -13,11 +13,11 @@ on:
   pull_request:
   workflow_dispatch:   # lets you trigger a run by hand from the Actions tab
 
-# Non-secret configuration. Override per-repo under Settings → Secrets and
-# variables → Actions → Variables, or just edit these values.
+# Non-secret org default. Override under Settings → Secrets and variables →
+# Actions → Variables (HARNESS_ORG), or just edit this value.
+# (HARNESS_BASE_URL is read per-step below so it can come from a secret too.)
 env:
   HARNESS_ORG: ${{ vars.HARNESS_ORG || 'bootcampjune2026' }}
-  HARNESS_BASE_URL: ${{ vars.HARNESS_BASE_URL || 'https://bootcamp-playground.pr2.harness.io' }}
 
 jobs:
   validate:
@@ -47,6 +47,7 @@ jobs:
         env:
           HARNESS_API_KEY: ${{ secrets.HARNESS_API_KEY }}
           HARNESS_ACCOUNT: ${{ secrets.HARNESS_ACCOUNT }}
+          HARNESS_BASE_URL: ${{ secrets.HARNESS_BASE_URL || vars.HARNESS_BASE_URL || 'https://bootcamp-playground.pr2.harness.io' }}
         run: python steps/step2_dynamic_test.py
 
       - name: "Step 4 — Merge results + build report"
