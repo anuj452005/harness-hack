@@ -1,0 +1,90 @@
+name: API Quality Validation
+
+# Runs the Harness API doc-drift validator: downloads the spec, runs the static
+# checks (+ optional LLM) and the dynamic live-CRUD checks, then merges everything
+# into results/results.json + results/report.html and uploads them as artifacts.
+#
+# Stages 2 (dynamic) and 3 (static) skip cleanly when their secrets are absent, so
+# the workflow stays green on forks / PRs that have no access to secrets.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:   # lets you trigger a run by hand from the Actions tab
+
+# Non-secret configuration. Override per-repo under Settings → Secrets and
+# variables → Actions → Variables, or just edit these values.
+env:
+  HARNESS_ORG: ${{ vars.HARNESS_ORG || 'bootcampjune2026' }}
+  HARNESS_BASE_URL: ${{ vars.HARNESS_BASE_URL || 'https://bootcamp-playground.pr2.harness.io' }}
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: "Step 1 — Download spec"
+        run: python steps/step1_download_spec.py
+
+      - name: "Step 3 — Static test (deterministic + optional LLM)"
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python steps/step3_static_test.py
+
+      - name: "Step 2 — Dynamic test (live Harness API)"
+        env:
+          HARNESS_API_KEY: ${{ secrets.HARNESS_API_KEY }}
+          HARNESS_ACCOUNT: ${{ secrets.HARNESS_ACCOUNT }}
+        run: python steps/step2_dynamic_test.py
+
+      - name: "Step 4 — Merge results + build report"
+        run: |
+          python steps/step4_build_dashboard.py
+          echo "----- results/ -----"
+          ls -la results/
+
+      - name: Upload results (results.json + report.html)
+        if: always()   # publish whatever was produced, even if an earlier step failed
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-quality-results
+          path: |
+            results/results.json
+            results/report.html
+            results/static_findings.json
+            results/dynamic_findings.json
+          if-no-files-found: warn
+
+      - name: Job summary
+        if: always()
+        run: |
+          if [ -f results/results.json ]; then
+            python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          d = json.load(open("results/results.json"))
+          f = d.get("findings", [])
+          c = {"pass": 0, "warn": 0, "fail": 0}
+          for x in f:
+              c[x.get("status", "warn")] = c.get(x.get("status", "warn"), 0) + 1
+          print("## API Quality Report\n")
+          print(f"- Module: **{d.get('module')}**")
+          print(f"- Endpoints parsed: {d.get('endpoints_total')}")
+          print(f"- Exercised live: {d.get('endpoints_tested_live')}")
+          print(f"- Findings: {len(f)} (pass={c['pass']} warn={c['warn']} fail={c['fail']})\n")
+          print("Download the **api-quality-results** artifact for results.json + report.html.")
+          PY
+          else
+            echo "No results.json produced." >> "$GITHUB_STEP_SUMMARY"
+          fi

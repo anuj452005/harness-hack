@@ -12,8 +12,7 @@ import html
 import json
 from typing import Any
 
-SEV_COLOR = {"error": "#d62728", "warn": "#e8890c", "info": "#1f77b4"}
-SOURCE_LABEL = {"static": "🔍 Static", "llm": "🤖 LLM", "dynamic": "🌐 Live"}
+from validator.render_common import SEV_COLOR, SOURCE_LABEL, representative_detail
 
 
 def _esc(v: Any) -> str:
@@ -76,7 +75,7 @@ def _live_section(findings: list[dict]) -> str:
     out = ["<h2>🌐 Live API calls — real request &amp; response</h2>"]
     for ep in order:
         rows = [f for f in live if f["endpoint"] == ep]
-        rep = _representative(rows)
+        rep = representative_detail(rows)
         issues = [r for r in rows if r.get("status") != "pass"]
         status = rep.get("actual_status", "—")
         badge = ("<span class='pill ok'>OK</span>" if not issues
@@ -132,14 +131,6 @@ def _finding_line(r: dict) -> str:
         f"<b style='color:{color}'>{_esc(r.get('severity'))}</b><br>"
         f"{_esc(r.get('message'))}{diff_html}</div>"
     )
-
-
-def _representative(rows: list[dict]) -> dict:
-    for r in rows:
-        d = r.get("detail")
-        if isinstance(d, dict) and ("actual_body" in d or "request_url" in d):
-            return d
-    return {}
 
 
 _HEAD = """<!doctype html><html lang="en"><head><meta charset="utf-8">

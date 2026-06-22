@@ -15,11 +15,9 @@ import pandas as pd
 import streamlit as st
 
 from config import RESULTS_DIR
+from validator.render_common import SEV_COLOR, SOURCE_LABEL, representative_detail
 
 st.set_page_config(page_title="Harness API Quality", layout="wide")
-
-SEV_COLOR = {"error": "#d62728", "warn": "#ff7f0e", "info": "#1f77b4"}
-SOURCE_LABEL = {"static": "🔍 Static", "llm": "🤖 LLM", "dynamic": "🌐 Live"}
 
 
 @st.cache_data
@@ -89,7 +87,7 @@ def _live_calls_section(df: pd.DataFrame) -> None:
 
     for ep in seen:
         rows = live[live["endpoint"] == ep]
-        rep = _representative_detail(rows)  # the row carrying request/response
+        rep = representative_detail(rows.to_dict("records"))  # row carrying request/response
         issues = rows[rows["status"] != "pass"]
         status_code = rep.get("actual_status", "—") if rep else "—"
         ok = issues.empty
@@ -126,15 +124,6 @@ def _live_calls_section(df: pd.DataFrame) -> None:
                         f"{r['message']}{extra}</div>",
                         unsafe_allow_html=True,
                     )
-
-
-def _representative_detail(rows: pd.DataFrame) -> dict:
-    """Pick the row whose detail carries the real request/response payload."""
-    for _, r in rows.iterrows():
-        d = r.get("detail")
-        if isinstance(d, dict) and ("actual_body" in d or "request_url" in d):
-            return d
-    return {}
 
 
 def _filters_and_table(df: pd.DataFrame) -> None:

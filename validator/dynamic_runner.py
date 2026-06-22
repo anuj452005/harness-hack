@@ -1,3 +1,5 @@
+
+
 """Drive the live Harness API and compare reality against the spec.
 
 The runner executes *scenarios* — ordered sequences of real HTTP calls that
@@ -32,12 +34,9 @@ class LiveClient:
         }
         self._client = httpx.Client(timeout=timeout, headers=self.headers)
 
-    def request(
-        self, method: str, path: str, body: Optional[dict] = None,
-        params: Optional[dict] = None,
-    ) -> httpx.Response:
+    def request(self, method: str, path: str, body: Optional[dict] = None) -> httpx.Response:
         url = f"{self.base_url}{path}"
-        return self._client.request(method.upper(), url, json=body, params=params or None)
+        return self._client.request(method.upper(), url, json=body)
 
     def close(self) -> None:
         self._client.close()
@@ -58,14 +57,8 @@ def _expected_success_code(ep: Endpoint) -> Optional[str]:
 
 
 def _success_schema(ep: Endpoint, code: str | None) -> Optional[dict]:
-    """Schema to diff a 2xx body against. Falls back to the 'default' response
-    when the spec documents no explicit success code (common in the NG API)."""
     if code and code in ep.responses:
-        s = ep.responses[code].get("schema")
-        if s is not None:
-            return s
-    if "default" in ep.responses:
-        return ep.responses["default"].get("schema")
+        return ep.responses[code].get("schema")
     return None
 
 
@@ -74,20 +67,19 @@ def run_call(
     ep: Endpoint,
     path: str,
     body: Optional[dict],
-    query: Optional[dict] = None,
 ) -> tuple[list[Finding], httpx.Response | None]:
     """Execute one live call and emit findings about status + response shape."""
     findings: list[Finding] = []
     expected_code = _expected_success_code(ep)
     try:
-        resp = client.request(ep.method, path, body, query)
+        resp = client.request(ep.method, path, body)
     except httpx.HTTPError as e:
         findings.append(
             _finding(
                 ep.key, ep.method, path,
                 category="request_error", severity="error", status="fail",
                 message=f"Live request failed: {e}",
-                detail={"request_body": body, "request_query": query},
+                detail={"request_body": body},
             )
         )
         return findings, None
@@ -101,24 +93,10 @@ def run_call(
     detail = {
         "request_method": ep.method.upper(),
         "request_url": f"{client.base_url}{path}",
-        "request_query": query,
         "request_body": body,
         "actual_status": actual_code,
         "actual_body": _truncate(actual_body),
     }
-
-    # 1a. Live success but the spec documents NO 2xx response at all.
-    if actual_code.startswith("2") and expected_code is None:
-        findings.append(
-            _finding(
-                ep.key, ep.method, path,
-                category="undocumented_success", severity="error", status="fail",
-                message=f"Live API returned {actual_code} but the spec documents no "
-                f"success (2xx) response — only {sorted(ep.responses)}.",
-                diff=Diff(expected=sorted(ep.responses), actual=actual_code),
-                detail=detail,
-            )
-        )
 
     # 1. Status-code agreement with the spec.
     if expected_code and actual_code != expected_code and not actual_code.startswith("2"):
@@ -234,14 +212,13 @@ def _run_one_scenario(
             continue
 
         path = _render(ep.path, ctx)
-        query = _build_query(ep, ctx, step)
         body = None
         if ep.method in ("post", "put"):
             overrides = {k: _render(v, ctx) if isinstance(v, str) else v
                          for k, v in step.get("body_overrides", {}).items()}
             body = synthesize(ep.request_schema, overrides)
 
-        step_findings, resp = run_call(client, ep, path, body, query)
+        step_findings, resp = run_call(client, ep, path, body)
         findings.extend(step_findings)
 
         # Capture identifiers from a successful create for later steps + teardown.
@@ -261,39 +238,11 @@ def _run_one_scenario(
         if ep is None:
             continue
         path = _render(ep.path, item["ctx"])
-        query = _build_query(ep, item["ctx"], {})
         try:
-            client.request(ep.method, path, params=query)
+            client.request(ep.method, path)
         except httpx.HTTPError:
             pass
     return findings
-
-
-# Query params whose value comes from run context rather than the scenario file.
-_QUERY_FROM_CTX = {
-    "accountIdentifier": "account",
-    "orgIdentifier": "org",
-    "orgIdentifiers": "org",
-    "projectIdentifier": "project",
-}
-
-
-def _build_query(ep: Endpoint, ctx: dict[str, Any], step: dict[str, Any]) -> dict[str, Any]:
-    """Assemble query params: required ones from context, plus step overrides."""
-    query: dict[str, Any] = {}
-    for p in ep.parameters:
-        if not isinstance(p, dict) or p.get("in") != "query":
-            continue
-        name = p.get("name")
-        ctx_key = _QUERY_FROM_CTX.get(name)
-        if ctx_key and ctx.get(ctx_key) is not None:
-            query[name] = ctx[ctx_key]
-        elif p.get("required") and name in ctx:
-            query[name] = ctx[name]
-    # Explicit per-step overrides win (e.g. pageIndex/pageSize/searchTerm).
-    for k, v in (step.get("query_overrides") or {}).items():
-        query[k] = _render(v, ctx) if isinstance(v, str) else v
-    return query
 
 
 def _render(template: Any, ctx: dict[str, Any]) -> Any:
