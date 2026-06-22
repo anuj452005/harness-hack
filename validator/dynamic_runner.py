@@ -34,9 +34,15 @@ class LiveClient:
         }
         self._client = httpx.Client(timeout=timeout, headers=self.headers)
 
-    def request(self, method: str, path: str, body: Optional[dict] = None) -> httpx.Response:
+    def request(
+        self,
+        method: str,
+        path: str,
+        body: Optional[dict] = None,
+        params: Optional[dict] = None,
+    ) -> httpx.Response:
         url = f"{self.base_url}{path}"
-        return self._client.request(method.upper(), url, json=body)
+        return self._client.request(method.upper(), url, json=body, params=params or None)
 
     def close(self) -> None:
         self._client.close()
@@ -62,24 +68,56 @@ def _success_schema(ep: Endpoint, code: str | None) -> Optional[dict]:
     return None
 
 
+# Standard Harness scope query params -> the scenario context key they read from.
+# The Harness NextGen API is account/org/project scoped via these query params,
+# so they are auto-filled whenever an endpoint declares them.
+_SCOPE_QUERY = {
+    "accountIdentifier": "account",
+    "orgIdentifier": "org",
+    "projectIdentifier": "project",
+}
+
+
+def _build_query(ep: Endpoint, ctx: dict[str, Any], step: dict[str, Any]) -> dict[str, Any]:
+    """Query params for a live call: auto-filled scope params + explicit overrides.
+
+    Only params the endpoint actually declares as ``in: query`` are auto-filled;
+    ``query_overrides`` from the scenario step are rendered against the context
+    and take precedence.
+    """
+    declared = {
+        p.get("name")
+        for p in ep.parameters
+        if isinstance(p, dict) and p.get("in") == "query"
+    }
+    query: dict[str, Any] = {}
+    for param_name, ctx_key in _SCOPE_QUERY.items():
+        if param_name in declared and ctx.get(ctx_key) is not None:
+            query[param_name] = ctx[ctx_key]
+    for k, v in step.get("query_overrides", {}).items():
+        query[k] = _render(v, ctx) if isinstance(v, str) else v
+    return query
+
+
 def run_call(
     client: LiveClient,
     ep: Endpoint,
     path: str,
     body: Optional[dict],
+    query: Optional[dict] = None,
 ) -> tuple[list[Finding], httpx.Response | None]:
     """Execute one live call and emit findings about status + response shape."""
     findings: list[Finding] = []
     expected_code = _expected_success_code(ep)
     try:
-        resp = client.request(ep.method, path, body)
+        resp = client.request(ep.method, path, body, query)
     except httpx.HTTPError as e:
         findings.append(
             _finding(
                 ep.key, ep.method, path,
                 category="request_error", severity="error", status="fail",
                 message=f"Live request failed: {e}",
-                detail={"request_body": body},
+                detail={"request_body": body, "request_query": query or {}},
             )
         )
         return findings, None
@@ -93,6 +131,7 @@ def run_call(
     detail = {
         "request_method": ep.method.upper(),
         "request_url": f"{client.base_url}{path}",
+        "request_query": query or {},
         "request_body": body,
         "actual_status": actual_code,
         "actual_body": _truncate(actual_body),
@@ -217,8 +256,9 @@ def _run_one_scenario(
             overrides = {k: _render(v, ctx) if isinstance(v, str) else v
                          for k, v in step.get("body_overrides", {}).items()}
             body = synthesize(ep.request_schema, overrides)
+        query = _build_query(ep, ctx, step)
 
-        step_findings, resp = run_call(client, ep, path, body)
+        step_findings, resp = run_call(client, ep, path, body, query)
         findings.extend(step_findings)
 
         # Capture identifiers from a successful create for later steps + teardown.
@@ -238,8 +278,9 @@ def _run_one_scenario(
         if ep is None:
             continue
         path = _render(ep.path, item["ctx"])
+        query = _build_query(ep, item["ctx"], {})
         try:
-            client.request(ep.method, path)
+            client.request(ep.method, path, params=query)
         except httpx.HTTPError:
             pass
     return findings
