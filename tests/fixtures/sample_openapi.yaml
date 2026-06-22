@@ -1,0 +1,71 @@
+openapi: 3.0.3
+info:
+  title: Fixture API
+  version: 0.0.1
+paths:
+  /v1/widgets:
+    post:
+      # DEFECT: no summary/description, no example, no error responses.
+      operationId: create-widget
+      parameters:
+        - name: Harness-Account
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [identifier]
+              properties:
+                identifier:
+                  type: string
+                count:
+                  type: integer
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  identifier:
+                    type: string
+                  count:
+                    type: integer
+
+  /v1/widgets/{widget}:
+    get:
+      summary: Get a widget
+      description: Returns one widget by id.
+      operationId: get-widget
+      parameters:
+        # DEFECT: path param 'widget' is NOT declared here.
+        - name: Harness-Account
+          in: header
+          required: true
+          description: Account id.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          # DEFECT: example present but invalid against schema (count is a string).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  identifier:
+                    type: string
+                  count:
+                    type: integer
+              example:
+                identifier: w1
+                count: "not-a-number"
+        "404":
+          description: Not found

@@ -1,0 +1,41 @@
+# Live-test scenario for the Harness PROJECT API as documented at
+# https://apidocs.harness.io/project  (the NextGen /ng/api/projects API).
+#
+# These endpoints are account-scoped via the `accountIdentifier` query param
+# (auto-filled from HARNESS_ACCOUNT) and org-scoped via `orgIdentifier`
+# (auto-filled from HARNESS_ORG). Project CRUD is created → listed → read →
+# updated → deleted, with automatic teardown.
+#
+# Spec source: harness-openapi/apidocs/openapi.yaml (downloaded from apidocs).
+
+module: apidocs
+tag_filter: "Project"
+
+scenarios:
+  - name: project-crud
+    vars:
+      project_id: apiqual_proj
+    steps:
+      - endpoint: "POST /ng/api/projects"
+        body_overrides:
+          identifier: "{project_id}"
+          name: "{project_id}"
+          orgIdentifier: "{org}"
+        teardown_with: "DELETE /ng/api/projects/{identifier}"
+        capture:
+          identifier: data.project.identifier
+      - endpoint: "GET /ng/api/projects"
+        query_overrides:
+          pageIndex: 0
+          pageSize: 50
+      - endpoint: "GET /ng/api/projects/{identifier}"
+      - endpoint: "PUT /ng/api/projects/{identifier}"
+        body_overrides:
+          identifier: "{identifier}"
+          name: "{project_id}_renamed"
+          orgIdentifier: "{org}"
+      - endpoint: "GET /ng/api/projects/list"
+        query_overrides:
+          pageIndex: 0
+          pageSize: 50
+      - endpoint: "DELETE /ng/api/projects/{identifier}"

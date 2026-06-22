@@ -1,0 +1,104 @@
+# Harness CI pipeline that runs the API-quality validator as independent steps.
+# Drop into project "Wakanda". Each Run step executes one of the steps/ scripts.
+#
+# Create these as Harness secrets first:
+#   - harness_api_key   (your x-api-key / PAT)
+#   - anthropic_api_key (Claude key for the LLM static checks)
+#
+# Step 1 downloads the spec; steps 2 (dynamic) and 3 (static) are independent and
+# run in PARALLEL; step 4 merges results and uploads results.json as an artifact.
+
+pipeline:
+  name: API Quality Validation
+  identifier: api_quality_validation
+  projectIdentifier: Wakanda
+  orgIdentifier: bootcampjune2026
+  stages:
+    - stage:
+        name: validate
+        identifier: validate
+        type: CI
+        spec:
+          cloneCodebase: true
+          platform:
+            os: Linux
+            arch: Amd64
+          runtime:
+            type: Cloud
+            spec: {}
+          execution:
+            steps:
+              - step:
+                  type: Run
+                  name: Install deps
+                  identifier: install
+                  spec:
+                    shell: Sh
+                    command: |
+                      cd p1
+                      pip install -r requirements.txt
+
+              - step:
+                  type: Run
+                  name: 1 - Download Spec
+                  identifier: download_spec
+                  spec:
+                    shell: Sh
+                    command: |
+                      cd p1
+                      python steps/step1_download_spec.py
+                    # envVariables:
+                    #   SPEC_URL: https://apidocs.harness.io/_bundle/index.yaml
+
+              - parallel:
+                  - step:
+                      type: Run
+                      name: 2 - Dynamic Test
+                      identifier: dynamic_test
+                      spec:
+                        shell: Sh
+                        command: |
+                          cd p1
+                          python steps/step2_dynamic_test.py
+                        envVariables:
+                          HARNESS_API_KEY: <+secrets.getValue("harness_api_key")>
+                          HARNESS_ACCOUNT: <+account.identifier>
+                          HARNESS_ORG: bootcampjune2026
+                          HARNESS_BASE_URL: https://bootcamp-playground.pr2.harness.io
+                  - step:
+                      type: Run
+                      name: 3 - Static Test
+                      identifier: static_test
+                      spec:
+                        shell: Sh
+                        command: |
+                          cd p1
+                          python steps/step3_static_test.py
+                        envVariables:
+                          ANTHROPIC_API_KEY: <+secrets.getValue("anthropic_api_key")>
+
+              - step:
+                  type: Run
+                  name: 4 - Build Dashboard Data
+                  identifier: build_dashboard
+                  spec:
+                    shell: Sh
+                    command: |
+                      cd p1
+                      python steps/step4_build_dashboard.py
+                      echo "results at p1/results/results.json"
+
+              - step:
+                  type: Run
+                  name: Publish report
+                  identifier: publish
+                  spec:
+                    shell: Sh
+                    command: |
+                      cd p1
+                      # Step 4 produced two artifacts:
+                      #   results/results.json  -> feed the Streamlit app (dashboard.py)
+                      #   results/report.html   -> open directly, no Streamlit needed
+                      ls -la results/
+                    # Then add an "Upload Artifacts" step (S3/GCS) for results/ ,
+                    # or use Artifact Metadata to expose report.html from the run.
